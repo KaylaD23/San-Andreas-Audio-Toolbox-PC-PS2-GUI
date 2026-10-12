@@ -1,0 +1,11 @@
+SAN ANDREAS AUDIO TOOLBOX PC/PS2 GUI v1.7
+----------------------------------------
+- Renamed application to San Andreas Audio Toolbox PC/PS2 GUI.
+- Added a dedicated PC SAAT tab using the original bundled saat_stream.exe.
+- PC tab supports exporting PC streams to OGG and stream_import.ini, then
+  importing/rebuilding to a new target stream while updating a selected copy of
+  TrakLkup.dat.
+- Bundled the original SAAT distribution files and manual for reference.
+- Kept PS2 PAK inspection, extraction, replacement, rebuild and verification in
+  a separate PS2 Track Browser tab.
+- Renamed launcher scripts for the new application name.
