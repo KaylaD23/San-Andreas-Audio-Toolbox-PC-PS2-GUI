@@ -3,4 +3,6 @@ San Andreas Audio Toolbox For PC &amp; PS2 is a version of the original saat but
 
 You still need the original saat which you can get from here: https://www.gtagarage.com/mods/show.php?id=1186
 
+Requires Python to function and you must run the Setup_Dependencies.bat aswell.
+
 <img width="2103" height="1596" alt="image" src="https://github.com/user-attachments/assets/cc3b5772-d70d-4197-bc61-54cd53b35bd5" />
