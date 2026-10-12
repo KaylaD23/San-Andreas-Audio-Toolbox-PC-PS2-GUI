@@ -34,6 +34,7 @@ VAG_HEADER_SIZE = 0x30
 VAG_MAGIC = b"VAGp"
 GTASA_STREAM_HEADER_SIZE = 8068
 GTASA_STREAM_RATE_OFFSETS = (0x1F54, 0x1F5C)
+PS2_RADIO_SAMPLE_RATE = 32000
 
 ARCHIVES = {
     "AA.PAK": "Police / ambient radio",
@@ -159,10 +160,12 @@ def vag_header(blob: bytes, offset: int = 0) -> Optional[dict]:
 def gta_sa_stream_header(blob: bytes, offset: int = 0) -> Optional[dict]:
     """Recognize the 8,068-byte GTA SA PS2 stream record header.
 
-    In the PS2 stream PAK format, TRAKLKUP offsets point to a per-track metadata
-    header, while the table size describes only the ADPCM payload immediately
-    after that header. The supplied reference TK.PAK uses a 0xFFFFFFFF marker,
-    duplicated sample-rate fields at 0x1F54/0x1F5C, and a 4-byte terminal tag.
+    In the PS2 stream PAK format, TRAKLKUP offsets point to an 8,068-byte
+    metadata header, while the table size describes only the ADPCM payload after
+    that header. The PS2 variant uses a 0xFFFFFFFF marker and a 4-byte terminal
+    tag (04 00 00 00). The DWORDs at 0x1F54/0x1F5C are legacy length-extra
+    metadata inherited from the stream-header layout; they are not a reliable
+    PS2 ADPCM playback-rate setting. PS2 radio payloads are encoded at 32,000 Hz.
     """
     end = offset + GTASA_STREAM_HEADER_SIZE
     if offset < 0 or end > len(blob):
@@ -174,9 +177,13 @@ def gta_sa_stream_header(blob: bytes, offset: int = 0) -> Optional[dict]:
         return None
     rate_a = struct.unpack_from("<I", h, GTASA_STREAM_RATE_OFFSETS[0])[0]
     rate_b = struct.unpack_from("<I", h, GTASA_STREAM_RATE_OFFSETS[1])[0]
-    if rate_a != rate_b or not 8000 <= rate_a <= 48000:
-        return None
-    return {"header_size": GTASA_STREAM_HEADER_SIZE, "sample_rate": rate_a}
+    # Do not validate the metadata values as sample rates: these are inherited
+    # length-extra fields and can be zero or differ across tracks/builds.
+    return {
+        "header_size": GTASA_STREAM_HEADER_SIZE,
+        "sample_rate": PS2_RADIO_SAMPLE_RATE,
+        "legacy_metadata_values": (rate_a, rate_b),
+    }
 
 
 def offset_to_bytes(value: int, unit: str) -> int:
@@ -1053,6 +1060,15 @@ def run_self_test():
         rebuilt_dir = stream_dir / "rebuilt"
         verify_dir = stream_dir / "verify"
         assert extract_tracks(stream_pak, stream_lookup, extracted, "Auto-detect", "Auto-detect", "Auto-detect")[0] == 2
+        inspected = inspect_archive(stream_pak, stream_lookup, "Auto-detect", "Auto-detect", "Auto-detect")
+        assert inspected[6][0].sample_rate == PS2_RADIO_SAMPLE_RATE, (
+            "PS2 stream playback rate must be fixed at 32000 Hz, not inferred from legacy metadata"
+        )
+        # Legacy fields are metadata, not a signature/rate constraint.
+        unusual_header = bytearray(stream_pak.read_bytes()[:GTASA_STREAM_HEADER_SIZE])
+        struct.pack_into("<I", unusual_header, GTASA_STREAM_RATE_OFFSETS[0], 0)
+        struct.pack_into("<I", unusual_header, GTASA_STREAM_RATE_OFFSETS[1], 48000)
+        assert gta_sa_stream_header(bytes(unusual_header))['sample_rate'] == PS2_RADIO_SAMPLE_RATE
         assert (extracted / "entry_0000.hdr").stat().st_size == GTASA_STREAM_HEADER_SIZE
         replacement_payload = bytes(range(32)) * 10
         # Put replacement in the active extraction folder, exactly as the GUI now does.

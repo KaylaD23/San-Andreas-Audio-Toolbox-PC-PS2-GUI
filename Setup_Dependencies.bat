@@ -1,6 +1,6 @@
 @echo off
 cd /d "%~dp0"
-echo Installing drag-and-drop support for SAAT PS2 Studio...
+echo Installing dependencies for San Andreas Audio Toolbox PC/PS2 GUI...
 where py >nul 2>nul
 if %errorlevel%==0 (
   py -3 -m pip install -r requirements.txt
@@ -15,5 +15,5 @@ if errorlevel 1 (
   exit /b 1
 )
 echo.
-echo Done. Re-launch SAAT PS2 Studio.
+echo Done. Re-launch San Andreas Audio Toolbox PC/PS2 GUI.
 pause

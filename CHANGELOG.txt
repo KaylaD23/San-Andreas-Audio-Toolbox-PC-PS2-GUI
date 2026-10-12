@@ -1,3 +1,14 @@
+SAN ANDREAS AUDIO TOOLBOX PC/PS2 GUI v1.8
+=========================================
+
+- Fixed PS2 radio conversion speed: stream entries now encode at 32,000 Hz.
+- Stopped treating duplicated legacy header length-extra fields as the target
+  PS2 ADPCM playback rate.
+- Added a regression assertion that stream entries select 32,000 Hz even when
+  legacy metadata fields contain 24,000.
+- Retained 24,000 Hz as the fallback for generic non-stream formats that lack
+  an embedded sample rate; VAG entries continue to use their own header rate.
+
 SAN ANDREAS AUDIO TOOLBOX PC/PS2 GUI v1.7
 ----------------------------------------
 - Renamed application to San Andreas Audio Toolbox PC/PS2 GUI.

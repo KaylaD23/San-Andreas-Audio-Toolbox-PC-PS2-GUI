@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SAAT PS2 Studio - a graphical workflow for GTA San Andreas PS2 radio PAKs.
+"""San Andreas Audio Toolbox PC/PS2 GUI - audio workflows for GTA San Andreas.
 
 The UI is new. The included PS2_PAK_Core module contains the archive/lookup
 reader and writer used by this frontend. Because PS2 game revisions vary, always
@@ -34,7 +34,7 @@ except ImportError:
     _TkBase = tk.Tk
     DND_AVAILABLE = False
 
-APP_TITLE = "San Andreas Audio Toolbox PC/PS2 GUI v1.7"
+APP_TITLE = "San Andreas Audio Toolbox PC/PS2 GUI v1.8"
 STATIONS = {
     "AA.PAK": "Police Radio / audio cues",
     "ADVERTS.PAK": "Advertisements",
@@ -848,7 +848,7 @@ class Studio(_TkBase):
                     raise audio_encoder.AudioEncodeError("Conversion cancelled by user; no replacements were committed.")
                 if source.suffix.lower() not in audio_encoder.SUPPORTED_AUDIO_SUFFIXES:
                     raise core.FormatError(f"Unsupported audio extension: {source.name}")
-                rate = tr.sample_rate or 24000
+                rate = tr.sample_rate or (32000 if tr.has_stream_header else 24000)
                 raw_path = stage / f"encoded_{n:04d}.adpcm"
                 base_percent = (n * 100.0) / max(total, 1)
                 span_percent = 100.0 / max(total, 1)

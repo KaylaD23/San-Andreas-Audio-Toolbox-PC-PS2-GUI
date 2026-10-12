@@ -1,5 +1,5 @@
-SAN ANDREAS AUDIO TOOLBOX PC/PS2 GUI
-====================================
+SAN ANDREAS AUDIO TOOLBOX PC/PS2 GUI v1.8
+========================================
 
 A dual-platform GUI for Grand Theft Auto: San Andreas audio workflows.
 
@@ -32,6 +32,9 @@ PS2 WORKFLOW
 1. Select a PS2 station PAK and its matching AUDIO/CONFIG/TRAKLKUP.DAT.
 2. Inspect archive and extract tracks.
 3. Drop supported audio files onto the Track Browser or use the import control.
+   For PS2 radio stream entries, audio is resampled and encoded at 32,000 Hz.
+   The duplicated values in the legacy 8,068-byte header are not used as the
+   PS2 ADPCM playback-rate setting.
 4. Rebuild Archive + Verify. Use the generated PAK and lookup table together.
 5. Test in PCSX2 before using the rebuilt image. Keep originals backed up.
 
@@ -49,6 +52,8 @@ NOTES
   original SAAT manual. It updates the selected TrakLkup.dat during import.
 - PC SAAT and PS2 PAK workflows are different formats. Do not use PC SAAT to
   import/rebuild PS2 PAKs, or the PS2 PAK tools to rebuild PC stream files.
+- PS2 radio rate fix in v1.8: radio payloads are encoded at 32,000 Hz instead
+  of inheriting 24,000/48,000 values from legacy stream-header metadata.
 - Always make backups. Structurally valid output is not a guarantee of in-game
   playback; test in the relevant game/emulator.
 
