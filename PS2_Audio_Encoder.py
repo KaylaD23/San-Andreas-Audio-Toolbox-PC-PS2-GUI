@@ -125,11 +125,13 @@ def _encode_pcm_frames(left: list[int], right: list[int], histories: list[list[i
         # first block, matching the PS2 radio payload signature observed in the
         # supplied archive. Table length, not a VAGp end marker, ends a stream.
         flag_l = 0x06 if first_frame and frame_i == 0 else 0x02
-        # GTA SA's stereo stream alternates one ADPCM frame per channel. The
-        # stream's first frame is marked 0x06; the immediately following right
-        # channel frame remains a normal 0x02 frame, matching the supplied PAK.
+        # The intermediate encoder layout alternates L/R frames, but GTA SA's
+        # final stream stores the channels in 0x10000-byte blocks. Each channel
+        # is an independent PSX ADPCM stream, so each channel's very first frame
+        # carries the 0x06 start flag.
+        flag_r = 0x06 if first_frame and frame_i == 0 else 0x02
         f_l, histories[0][0], histories[0][1] = _encode_frame(a, histories[0][0], histories[0][1], flag_l)
-        f_r, histories[1][0], histories[1][1] = _encode_frame(b, histories[1][0], histories[1][1], 0x02)
+        f_r, histories[1][0], histories[1][1] = _encode_frame(b, histories[1][0], histories[1][1], flag_r)
         out[out_pos:out_pos + FRAME_BYTES] = f_l
         out[out_pos + FRAME_BYTES:out_pos + 2 * FRAME_BYTES] = f_r
         out_pos += FRAME_BYTES * 2
@@ -238,11 +240,12 @@ if njit is not None:
         for group in range(group_count):
             flag = 0x06 if first_frame and group == 0 else 0x02
             base = group * FRAME_BYTES * 2
+            right_flag = 0x06 if first_frame and group == 0 else 0x02
             lh1, lh2 = _encode_channel_frame_numba(
                 samples, group, 0, lh1, lh2, flag, out, base, best_q, temp_q
             )
             rh1, rh2 = _encode_channel_frame_numba(
-                samples, group, 1, rh1, rh2, 0x02, out, base + FRAME_BYTES, best_q, temp_q
+                samples, group, 1, rh1, rh2, right_flag, out, base + FRAME_BYTES, best_q, temp_q
             )
         histories[0], histories[1] = lh1, lh2
         histories[2], histories[3] = rh1, rh2
@@ -312,6 +315,160 @@ def encode_pcm_wav_to_ps2_payload(pcm_wav: Path, output_raw: Path, sample_rate: 
             "encoder": "Numba-compiled PSX ADPCM (five-predictor search)",
         }
 
+# GTA San Andreas PS2 type-4 radio streams have two synchronized stereo
+# representations per physical 0x21000-byte chunk:
+#   mini stream:  0x0800 bytes left + 0x0800 bytes right (750 Hz)
+#   full stream:  0x10000 bytes left + 0x10000 bytes right (usually 24000 Hz)
+# The mini stream occupies the first 0x1000 bytes of each chunk. The normal
+# stream follows it. These are data sections, not arbitrary zero padding.
+GTASA_CHUNK_SIZE = 0x21000
+GTASA_MINI_CHANNEL_BLOCK = 0x0800
+GTASA_FULL_CHANNEL_BLOCK = 0x10000
+GTASA_MINI_RATE = 750
+
+
+def _split_stereo_adpcm_frames(raw: bytes, label: str) -> tuple[bytes, bytes]:
+    """Split the encoder's temporary L-frame/R-frame pairs into channel streams."""
+    if not raw:
+        raise AudioEncodeError(f"{label} ADPCM stream is empty.")
+    if len(raw) % (FRAME_BYTES * 2):
+        raise AudioEncodeError(
+            f"{label} stereo ADPCM is {len(raw)} bytes; expected complete 32-byte L/R frame pairs."
+        )
+    left = bytearray(len(raw) // 2)
+    right = bytearray(len(raw) // 2)
+    out = 0
+    for pos in range(0, len(raw), FRAME_BYTES * 2):
+        left[out:out + FRAME_BYTES] = raw[pos:pos + FRAME_BYTES]
+        right[out:out + FRAME_BYTES] = raw[pos + FRAME_BYTES:pos + FRAME_BYTES * 2]
+        out += FRAME_BYTES
+    return bytes(left), bytes(right)
+
+
+def pack_gtasa_ps2_stream_payload(full_raw_path: Path, mini_raw_path: Path,
+                                  output_packed_path: Path) -> dict:
+    """Pack temporary stereo-frame ADPCM into GTA SA PS2 type-4 chunk layout.
+
+    Both sources are temporary interleaved-frame encodes. This packs every
+    0x21000 chunk as mini-L (0x800), mini-R (0x800), full-L (0x10000), full-R
+    (0x10000). Short final blocks are padded with silence so chunk offsets stay
+    valid. The PAK lookup size must use the physical packed length, not either
+    unpadded temporary length.
+    """
+    full_left, full_right = _split_stereo_adpcm_frames(full_raw_path.read_bytes(), "Full-rate")
+    mini_left, mini_right = _split_stereo_adpcm_frames(mini_raw_path.read_bytes(), "Mini")
+    full_block = GTASA_FULL_CHANNEL_BLOCK
+    mini_block = GTASA_MINI_CHANNEL_BLOCK
+    chunk_count = max(
+        (len(full_left) + full_block - 1) // full_block,
+        (len(mini_left) + mini_block - 1) // mini_block,
+        1,
+    )
+    # Do not silently drop mini-stream bytes if independently rounded source
+    # lengths differ by a frame around a chunk boundary.
+    if (len(full_left) > chunk_count * full_block or
+            len(mini_left) > chunk_count * mini_block):
+        raise AudioEncodeError("Full/mini stream lengths could not be aligned to GTA SA PS2 chunks.")
+    output_packed_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_packed_path.open("wb") as out:
+        for index in range(chunk_count):
+            fs = index * full_block
+            ms = index * mini_block
+            fl = full_left[fs:fs + full_block].ljust(full_block, b"\x00")
+            fr = full_right[fs:fs + full_block].ljust(full_block, b"\x00")
+            ml = mini_left[ms:ms + mini_block].ljust(mini_block, b"\x00")
+            mr = mini_right[ms:ms + mini_block].ljust(mini_block, b"\x00")
+            out.write(ml)
+            out.write(mr)
+            out.write(fl)
+            out.write(fr)
+    packed_size = output_packed_path.stat().st_size
+    expected = chunk_count * GTASA_CHUNK_SIZE
+    if packed_size != expected or packed_size % GTASA_CHUNK_SIZE:
+        raise AudioEncodeError(
+            f"Packed GTA SA PS2 stream size is {packed_size}; expected {expected} bytes in complete 0x21000 chunks."
+        )
+    return {
+        "full_raw_bytes": len(full_left) + len(full_right),
+        "mini_raw_bytes": len(mini_left) + len(mini_right),
+        "full_channel_bytes": len(full_left),
+        "mini_channel_bytes": len(mini_left),
+        "packed_bytes": packed_size,
+        "chunk_count": chunk_count,
+        "chunk_size": GTASA_CHUNK_SIZE,
+        "full_sample_rate": None,
+        "mini_sample_rate": GTASA_MINI_RATE,
+        "layout": "mini L/R 0x800 each, then full L/R 0x10000 each",
+    }
+
+
+def update_gtasa_type4_stream_header(header: bytes, packed_meta: dict, full_rate: int) -> bytes:
+    """Update per-channel audio byte counts in a GTA SA PS2 type-4 stream header.
+
+    Header fields store the unpadded byte count for each channel in each stream
+    variant. The 750 Hz mini-stream pair and full-rate pair are duplicated for
+    left and right. Timing/loop fields elsewhere in the header are preserved.
+    """
+    if len(header) != 0x1F84:
+        raise AudioEncodeError(f"GTA SA stream header must be 8068 bytes; got {len(header)}.")
+    if struct.unpack_from("<I", header, 0x1F80)[0] != 4:
+        raise AudioEncodeError(
+            "This automatic dual-stream header update supports GTA SA PS2 type-4 records only."
+        )
+    # Convert the immutable input bytes to a mutable buffer before packing fields.
+    updated = bytearray(header)
+    mini_size = int(packed_meta["mini_channel_bytes"])
+    full_size = int(packed_meta["full_channel_bytes"])
+    for off in (0x1F40, 0x1F48):
+        struct.pack_into("<I", updated, off, mini_size)
+    for off in (0x1F44, 0x1F4C):
+        struct.pack_into("<I", updated, off, GTASA_MINI_RATE)
+    for off in (0x1F50, 0x1F58):
+        struct.pack_into("<I", updated, off, full_size)
+    for off in (0x1F54, 0x1F5C):
+        struct.pack_into("<I", updated, off, int(full_rate))
+    return bytes(updated)
+
+
+def run_gtasa_stream_layout_self_test() -> None:
+    """Quick synthetic regression test for chunk packing and mutable header edits."""
+    import tempfile
+
+    def make_stereo(channel_bytes: int, marker_left: int, marker_right: int) -> bytes:
+        if channel_bytes % FRAME_BYTES:
+            raise AssertionError("test channel length must align to ADPCM frames")
+        out = bytearray()
+        count = channel_bytes // FRAME_BYTES
+        for i in range(count):
+            flag = 0x06 if i == 0 else 0x02
+            left = bytes([marker_left, flag]) + bytes(FRAME_BYTES - 2)
+            right = bytes([marker_right, flag]) + bytes(FRAME_BYTES - 2)
+            out.extend(left)
+            out.extend(right)
+        return bytes(out)
+
+    with tempfile.TemporaryDirectory(prefix="saatps2_layout_test_") as td:
+        root = Path(td)
+        full = root / "full.bin"
+        mini = root / "mini.bin"
+        packed = root / "packed.bin"
+        full.write_bytes(make_stereo(GTASA_FULL_CHANNEL_BLOCK, 0xA1, 0xB1))
+        mini.write_bytes(make_stereo(GTASA_MINI_CHANNEL_BLOCK, 0xA2, 0xB2))
+        meta = pack_gtasa_ps2_stream_payload(full, mini, packed)
+        payload = packed.read_bytes()
+        assert len(payload) == GTASA_CHUNK_SIZE and meta["chunk_count"] == 1
+        # Check channel layout and independently initialized first-frame flags.
+        expected = ((0x0000, 0xA2), (0x0800, 0xB2), (0x1000, 0xA1), (0x11000, 0xB1))
+        for offset, marker in expected:
+            assert payload[offset] == marker and payload[offset + 1] == 0x06
+        header = bytearray(0x1F84)
+        struct.pack_into("<I", header, 0x1F80, 4)
+        updated = update_gtasa_type4_stream_header(bytes(header), meta, 24000)
+        assert struct.unpack_from("<II", updated, 0x1F40) == (GTASA_MINI_CHANNEL_BLOCK, GTASA_MINI_RATE)
+        assert struct.unpack_from("<II", updated, 0x1F50) == (GTASA_FULL_CHANNEL_BLOCK, 24000)
+        assert struct.unpack_from("<I", updated, 0x1F80)[0] == 4
+
+
 def sys_byteorder_big() -> bool:
     import sys
     return sys.byteorder == "big"
@@ -329,7 +486,9 @@ def convert_audio_to_ps2_payload(source: Path, output_raw: Path, ffmpeg: str,
     exe = find_ffmpeg(ffmpeg)
     if not exe:
         raise AudioEncodeError("FFmpeg was not found. Install FFmpeg or set its path in Audio Preparation.")
-    if not 8000 <= sample_rate <= 48000:
+    # 750 Hz is used by GTA SA PS2's low-quality mini-stream; normal full
+    # streams use the rate read from their original metadata (commonly 24000 Hz).
+    if not 500 <= sample_rate <= 48000:
         raise AudioEncodeError(f"Unsupported target sample rate: {sample_rate} Hz.")
     if np is None or njit is None:
         raise AudioEncodeError("NumPy and Numba are required for fast encoding. Run Setup_Dependencies.bat first.")

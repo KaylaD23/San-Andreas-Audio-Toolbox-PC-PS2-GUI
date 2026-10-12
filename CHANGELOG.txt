@@ -1,22 +1,20 @@
-SAN ANDREAS AUDIO TOOLBOX PC/PS2 GUI v1.8
-=========================================
+San Andreas Audio Toolbox PC/PS2 GUI — Changelog
 
-- Fixed PS2 radio conversion speed: stream entries now encode at 32,000 Hz.
-- Stopped treating duplicated legacy header length-extra fields as the target
-  PS2 ADPCM playback rate.
-- Added a regression assertion that stream entries select 32,000 Hz even when
-  legacy metadata fields contain 24,000.
-- Retained 24,000 Hz as the fallback for generic non-stream formats that lack
-  an embedded sample rate; VAG entries continue to use their own header rate.
+v2.1
+- Fixed the fundamental GTA SA PS2 stream packing format. The prior encoder emitted alternating L/R frames rather than the game's channel-block layout.
+- Creates both synchronized stream variants: 750 Hz mini audio (0x800 bytes/channel) and full audio (0x10000 bytes/channel) in 0x21000-byte chunks.
+- Sets the start flag independently on the first frame of each channel.
+- Rebuilds from the physical packed payload so the lookup table reflects the packed size, not the temporary raw ADPCM size.
+- Updates per-channel mini/full byte counts and corresponding 750 Hz / 24,000 Hz fields in the 8,068-byte type-4 header.
+- Adds a format-specific self-test for channel block offsets, frame flags, and writable header updates.
+- Updated README to document the format caveat and require an in-game PCSX2 playback test.
 
-SAN ANDREAS AUDIO TOOLBOX PC/PS2 GUI v1.7
-----------------------------------------
-- Renamed application to San Andreas Audio Toolbox PC/PS2 GUI.
-- Added a dedicated PC SAAT tab using the original bundled saat_stream.exe.
-- PC tab supports exporting PC streams to OGG and stream_import.ini, then
-  importing/rebuilding to a new target stream while updating a selected copy of
-  TrakLkup.dat.
-- Bundled the original SAAT distribution files and manual for reference.
-- Kept PS2 PAK inspection, extraction, replacement, rebuild and verification in
-  a separate PS2 Track Browser tab.
-- Renamed launcher scripts for the new application name.
+v2.0
+- Incorrectly treated the 24,000 Hz stream-header value as the only problem and emitted an unwrapped stereo ADPCM payload. Replaced by the proper chunked stream layout in v2.1.
+
+v1.9
+- Fixed archive detection to recognize GTA San Andreas PS2 stream headers as well as standalone VAGp containers.
+- Corrected the misleading “no VAGp headers” status for radio PAKs whose entries use the GTA SA 8,068-byte stream header.
+
+v1.8
+- Initially changed PS2 radio replacement payloads to 32,000 Hz; this was not a validated fix.

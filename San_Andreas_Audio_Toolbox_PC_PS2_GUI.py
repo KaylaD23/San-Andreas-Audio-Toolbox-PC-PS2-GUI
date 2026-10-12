@@ -34,7 +34,7 @@ except ImportError:
     _TkBase = tk.Tk
     DND_AVAILABLE = False
 
-APP_TITLE = "San Andreas Audio Toolbox PC/PS2 GUI v1.8"
+APP_TITLE = "San Andreas Audio Toolbox PC/PS2 GUI v2.1"
 STATIONS = {
     "AA.PAK": "Police Radio / audio cues",
     "ADVERTS.PAK": "Advertisements",
@@ -603,26 +603,39 @@ class Studio(_TkBase):
                 size = fpath.stat().st_size if fpath and fpath.is_file() else tr.exact_size or tr.stored_size_bytes
                 self.track_tree.insert("", "end", iid=str(tr.record.index), values=(
                     f"{tr.record.index:04d}", filename, f"{tr.offset_bytes:,}", human_size(size),
-                    "VAGp" if tr.is_vag else "Raw / unknown", f"{tr.sample_rate:,} Hz" if tr.sample_rate else "—"
+                    "VAGp" if tr.is_vag else "GTA SA stream" if tr.has_stream_header else "Raw / unknown", f"{tr.sample_rate:,} Hz" if tr.sample_rate else "—"
                 ))
             self.project_state.set(f"ID 0x{gid:02X} · {len(tracks)} entries")
             vag_count = sum(t.is_vag for t in tracks)
-            if vag_count:
-                self.status_var.set(f"Inspection OK — {vag_count} VAGp headers across {len(tracks)} entries.")
+            stream_count = sum(t.has_stream_header for t in tracks)
+            if stream_count or vag_count:
+                self.status_var.set(
+                    f"Inspection OK — {stream_count} GTA SA stream headers, {vag_count} VAGp headers across {len(tracks)} entries."
+                )
             else:
-                self.status_var.set(f"Inspection OK — {len(tracks)} entries; no embedded VAGp signatures (raw mode).")
+                self.status_var.set(f"Inspection OK — {len(tracks)} entries; unrecognized/raw mode.")
             self._log("=" * 84)
             self._log(f"INSPECT: {pak_path} ({human_size(len(pak))})")
             self._log(f"LOOKUP:  {lookup_path} ({human_size(len(lookup_data))}, {len(all_records):,} records)")
             self._log(f"Archive ID: 0x{gid:02X} · Station name from lookup: {canonical_name or 'Custom PAK'} · Offsets: {off_unit} · Sizes: {size_unit}")
-            self._log(f"Entries in this PAK group: {len(tracks)} · Valid VAGp headers: {vag_count}")
+            self._log(
+                f"Entries in this PAK group: {len(tracks)} · GTA SA stream headers: {stream_count} · VAGp headers: {vag_count}"
+            )
             if canonical_name and Path(pak_path).name.upper() != canonical_name:
                 self._log(f"Filename normalization: rebuild output will be NEW-{canonical_name} based on lookup ID 0x{gid:02X}.")
-            if vag_count == 0:
-                self._log("NOTE: No VAGp signature was found at the selected entries. This can be normal for raw stream payloads; exported entries will be .bin. Confirm the PAK and lookup table come from the same PS2 game revision.")
-                messagebox.showwarning("Inspection complete — raw entries", f"Detected archive ID 0x{gid:02X}.\n{len(tracks)} lookup entries found; no embedded VAGp headers were detected.\n\nThe offsets are usable, so the entries can be exported as raw .bin data. Make sure the PAK and lookup table are from the same PS2 release before rebuilding.")
-            else:
+            if stream_count:
+                messagebox.showinfo(
+                    "PS2 stream archive detected",
+                    f"Detected archive ID 0x{gid:02X}.\n{len(tracks)} lookup entries found; "
+                    f"{stream_count} GTA SA stream headers and {vag_count} VAGp headers detected.\n\n"
+                    "This radio PAK uses GTA SA stream headers, not standalone VAGp files. That is normal; "
+                    "the audio payload is stored after each 8,068-byte stream header. Continue with Extract tracks."
+                )
+            elif vag_count:
                 messagebox.showinfo("Inspection complete", f"Detected archive ID 0x{gid:02X}.\n{len(tracks)} lookup entries found; {vag_count} have VAGp headers.\n\nCheck the Track browser tab for entry details.")
+            else:
+                self._log("NOTE: No VAGp or GTA SA stream signature was found at the selected entries. Confirm that the PAK and lookup table match and try setting the archive ID/offset unit manually.")
+                messagebox.showwarning("Unrecognized/raw entries", f"Detected archive ID 0x{gid:02X}.\n{len(tracks)} lookup entries were found, but no VAGp or GTA SA stream headers were recognized.\n\nThe files may still be raw data, but audio transcoding is disabled until the format is identified. Confirm the PAK and lookup table are from the same PS2 release.")
         except Exception as exc:
             self.status_var.set("Inspection failed — see Activity log.")
             self._log("INSPECTION ERROR: " + str(exc))
@@ -692,7 +705,7 @@ class Studio(_TkBase):
                 status = "Extracted"
             else:
                 size = tr.exact_size or tr.stored_size_bytes
-                status = "VAGp" if tr.is_vag else "Raw / unknown"
+                status = "VAGp" if tr.is_vag else "GTA SA stream" if tr.has_stream_header else "Raw / unknown"
             self.track_tree.insert("", "end", iid=str(tr.record.index), values=(f"{tr.record.index:04d}", filename, f"{tr.offset_bytes:,}", human_size(size), status, f"{tr.sample_rate:,} Hz" if tr.sample_rate else "—"))
 
     def _on_audio_drop(self, event):
@@ -829,12 +842,7 @@ class Studio(_TkBase):
 
     @staticmethod
     def _encode_and_replace_files(tracks_dir: Path, targets, ffmpeg: str, progress=None, cancel_event=None):
-        """Stage transcodes first, then replace files inside the active tracks folder.
-
-        This avoids the previous test mistake where a converted .bin was written
-        beside the extracted folder. The rebuilder reads only from tracks_dir, so
-        audio is staged there and committed to the exact entry filename it reads.
-        """
+        """Stage game-ready PS2 stream files and metadata before committing."""
         stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_dir = tracks_dir / "_saatps2_backups" / stamp
         committed = []
@@ -848,7 +856,7 @@ class Studio(_TkBase):
                     raise audio_encoder.AudioEncodeError("Conversion cancelled by user; no replacements were committed.")
                 if source.suffix.lower() not in audio_encoder.SUPPORTED_AUDIO_SUFFIXES:
                     raise core.FormatError(f"Unsupported audio extension: {source.name}")
-                rate = tr.sample_rate or (32000 if tr.has_stream_header else 24000)
+                rate = tr.sample_rate or 24000
                 raw_path = stage / f"encoded_{n:04d}.adpcm"
                 base_percent = (n * 100.0) / max(total, 1)
                 span_percent = 100.0 / max(total, 1)
@@ -860,7 +868,7 @@ class Studio(_TkBase):
                     if message.startswith("Encoding ") and message.endswith("%"):
                         try:
                             fraction = float(message.split()[1].rstrip("%")) / 100.0
-                            pct = base_percent + span_percent * fraction
+                            pct = base_percent + span_percent * fraction * 0.82
                         except (ValueError, IndexError):
                             pct = base_percent
                     else:
@@ -873,46 +881,109 @@ class Studio(_TkBase):
                 )
                 if not raw_path.is_file() or raw_path.stat().st_size == 0:
                     raise core.FormatError(f"Encoder produced no payload for {source.name}.")
+
+                header_stage = None
+                header_target = None
                 if tr.has_stream_header:
-                    payload_len = raw_path.stat().st_size
-                    if payload_len % 32:
-                        raise core.FormatError(f"Encoded payload for {source.name} is not stereo-frame aligned (size {payload_len}).")
+                    mini_path = stage / f"mini_{n:04d}.adpcm"
+                    if progress:
+                        progress(
+                            f"Track {n + 1}/{total}: {source.name} — encoding 750 Hz mini stream",
+                            base_percent + span_percent * 0.84,
+                        )
+                    mini_meta = audio_encoder.convert_audio_to_ps2_payload(
+                        source, mini_path, ffmpeg, audio_encoder.GTASA_MINI_RATE,
+                        progress=None, cancel_event=cancel_event
+                    )
                     stage_file = stage / target.name
-                    shutil.copy2(raw_path, stage_file)
+                    packed_meta = audio_encoder.pack_gtasa_ps2_stream_payload(raw_path, mini_path, stage_file)
+
+                    # For type-4 streams the four size fields are per-channel
+                    # unpadded lengths. Leaving the old lengths in place causes
+                    # the game to interpret a new-duration stream using stale
+                    # source metadata. Do not guess at unrelated loop/beat data.
+                    header_target = tracks_dir / f"entry_{tr.record.index:04d}.hdr"
+                    if not header_target.is_file():
+                        raise core.FormatError(
+                            f"Missing {header_target.name}; re-extract this PAK so its original stream header can be updated safely."
+                        )
+                    original_header = header_target.read_bytes()
+                    header_bytes = audio_encoder.update_gtasa_type4_stream_header(
+                        original_header, packed_meta, rate
+                    )
+                    header_stage = stage / header_target.name
+                    header_stage.write_bytes(header_bytes)
+                    meta.update({
+                        "packed_bytes": packed_meta["packed_bytes"],
+                        "chunk_count": packed_meta["chunk_count"],
+                        "mini_sample_rate": audio_encoder.GTASA_MINI_RATE,
+                        "mini_duration_seconds": mini_meta["duration_seconds"],
+                        "full_channel_bytes": packed_meta["full_channel_bytes"],
+                        "mini_channel_bytes": packed_meta["mini_channel_bytes"],
+                        "encoder": "PSX ADPCM; GTA SA PS2 dual-stream chunk layout",
+                    })
                 else:
                     stage_file = stage / target.name
                     audio_encoder.wrap_vagp(raw_path, stage_file, rate)
                     core.read_vag_size(stage_file)
-                staged_targets.append((stage_file, target, source, tr, meta))
+
+                staged_targets.append({
+                    "stage_file": stage_file,
+                    "target": target,
+                    "header_stage": header_stage,
+                    "header_target": header_target,
+                    "source": source,
+                    "track": tr,
+                    "meta": meta,
+                })
                 if progress:
                     progress(f"Track {n + 1}/{total}: {source.name} — complete", ((n + 1) * 100.0) / max(total, 1))
 
             if cancel_event is not None and cancel_event.is_set():
                 raise audio_encoder.AudioEncodeError("Conversion cancelled by user; no replacements were committed.")
+
+            # Validate every target before backing up or committing anything.
+            for item in staged_targets:
+                if not item["target"].is_file():
+                    raise core.FormatError(
+                        f"Expected extracted target is missing: {item['target'].name}. Re-extract before replacing audio."
+                    )
+                if item["header_target"] is not None and not item["header_target"].is_file():
+                    raise core.FormatError(f"Expected stream header is missing: {item['header_target'].name}.")
+
             backup_dir.mkdir(parents=True, exist_ok=True)
-            backup_pairs = []
-            for _, target, _, _, _ in staged_targets:
-                if not target.is_file():
-                    raise core.FormatError(f"Expected extracted target is missing: {target.name}. Re-extract before replacing audio.")
-                backup = backup_dir / f"{target.name}.original"
-                if backup.exists():
-                    backup = backup_dir / f"{target.name}.{datetime.datetime.now().strftime('%H%M%S%f')}.original"
-                shutil.copy2(target, backup)
-                backup_pairs.append((target, backup))
+            backup_by_target = {}
+            for item in staged_targets:
+                paths = [item["target"]]
+                if item["header_target"] is not None:
+                    paths.append(item["header_target"])
+                for original in paths:
+                    backup = backup_dir / f"{original.name}.original"
+                    if backup.exists():
+                        backup = backup_dir / f"{original.name}.{datetime.datetime.now().strftime('%H%M%S%f')}.original"
+                    shutil.copy2(original, backup)
+                    backup_by_target[str(original)] = backup
+
             try:
-                backup_by_target = {str(t): b for t, b in backup_pairs}
-                for stage_file, target, source, tr, meta in staged_targets:
-                    os.replace(stage_file, target)
-                    committed.append((target, backup_by_target[str(target)]))
+                for item in staged_targets:
+                    os.replace(item["stage_file"], item["target"])
+                    committed.append((item["target"], backup_by_target[str(item["target"])]))
+                    if item["header_stage"] is not None:
+                        os.replace(item["header_stage"], item["header_target"])
+                        committed.append((item["header_target"], backup_by_target[str(item["header_target"])]))
+                    meta = item["meta"]
                     results.append({
-                        "source": str(source), "record": tr.record.index, "target": str(target),
-                        "sample_rate": meta["sample_rate"], "duration": meta["duration_seconds"],
-                        "bytes": target.stat().st_size, "encoder": meta.get("encoder", "PS2 ADPCM"),
+                        "source": str(item["source"]), "record": item["track"].record.index,
+                        "target": str(item["target"]), "sample_rate": meta["sample_rate"],
+                        "duration": meta["duration_seconds"], "bytes": item["target"].stat().st_size,
+                        "encoder": meta.get("encoder", "PS2 ADPCM"),
+                        "chunk_count": meta.get("chunk_count"),
+                        "mini_sample_rate": meta.get("mini_sample_rate"),
                     })
             except Exception:
-                for target, backup in reversed(committed):
+                for original, backup in reversed(committed):
                     if backup.is_file():
-                        shutil.copy2(backup, target)
+                        shutil.copy2(backup, original)
                 raise
         return {"items": results, "backup_dir": str(backup_dir)}
 
@@ -946,6 +1017,7 @@ class Studio(_TkBase):
                 f"AUDIO REPLACED: record {item['record']:04d}; {Path(item['source']).name} → "
                 f"{Path(item['target']).name}; {item['sample_rate']} Hz; "
                 f"{item['duration']:.2f}s; {item['bytes']:,} bytes; encoder={item.get('encoder', 'PS2 ADPCM')}"
+                + (f"; chunks={item['chunk_count']}; mini={item['mini_sample_rate']} Hz" if item.get('chunk_count') else "")
             )
         self._log(f"Original track backups: {result['backup_dir']}")
         self.status_var.set(f"Encoded and replaced {len(result['items'])} track(s). Ready to rebuild and verify.")
@@ -1126,6 +1198,8 @@ class Studio(_TkBase):
 def main():
     if "--self-test" in sys.argv:
         core.run_self_test()
+        audio_encoder.run_gtasa_stream_layout_self_test()
+        print("GTA SA PS2 type-4 format self-test passed: chunk layout, channel first-frame flags, and header rate/size updates.")
         return
     app = Studio()
     app.mainloop()

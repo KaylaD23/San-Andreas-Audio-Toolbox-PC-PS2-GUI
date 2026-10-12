@@ -34,7 +34,7 @@ VAG_HEADER_SIZE = 0x30
 VAG_MAGIC = b"VAGp"
 GTASA_STREAM_HEADER_SIZE = 8068
 GTASA_STREAM_RATE_OFFSETS = (0x1F54, 0x1F5C)
-PS2_RADIO_SAMPLE_RATE = 32000
+PS2_RADIO_SAMPLE_RATE = 24000
 
 ARCHIVES = {
     "AA.PAK": "Police / ambient radio",
@@ -163,9 +163,9 @@ def gta_sa_stream_header(blob: bytes, offset: int = 0) -> Optional[dict]:
     In the PS2 stream PAK format, TRAKLKUP offsets point to an 8,068-byte
     metadata header, while the table size describes only the ADPCM payload after
     that header. The PS2 variant uses a 0xFFFFFFFF marker and a 4-byte terminal
-    tag (04 00 00 00). The DWORDs at 0x1F54/0x1F5C are legacy length-extra
-    metadata inherited from the stream-header layout; they are not a reliable
-    PS2 ADPCM playback-rate setting. PS2 radio payloads are encoded at 32,000 Hz.
+    tag (04 00 00 00). For the supplied original game archive, the DWORDs at
+    0x1F54 and 0x1F5C both contain 24,000 for all 101 entries. Replacement audio
+    must be encoded at a rate consistent with these preserved header fields.
     """
     end = offset + GTASA_STREAM_HEADER_SIZE
     if offset < 0 or end > len(blob):
@@ -177,12 +177,18 @@ def gta_sa_stream_header(blob: bytes, offset: int = 0) -> Optional[dict]:
         return None
     rate_a = struct.unpack_from("<I", h, GTASA_STREAM_RATE_OFFSETS[0])[0]
     rate_b = struct.unpack_from("<I", h, GTASA_STREAM_RATE_OFFSETS[1])[0]
-    # Do not validate the metadata values as sample rates: these are inherited
-    # length-extra fields and can be zero or differ across tracks/builds.
+    # Use the matching values present in the game's real stream headers. The
+    # supplied TK.PAK has 24,000 in both locations for every inspected entry.
+    # A conflicting or implausible pair should not accidentally force the
+    # replacement encoder to a rate that disagrees with the preserved header.
+    if rate_a == rate_b and 8000 <= rate_a <= 48000:
+        playback_rate = rate_a
+    else:
+        playback_rate = PS2_RADIO_SAMPLE_RATE
     return {
         "header_size": GTASA_STREAM_HEADER_SIZE,
-        "sample_rate": PS2_RADIO_SAMPLE_RATE,
-        "legacy_metadata_values": (rate_a, rate_b),
+        "sample_rate": playback_rate,
+        "header_rate_values": (rate_a, rate_b),
     }
 
 
@@ -314,7 +320,7 @@ def detect_raw_group_by_extent(pak: bytes, records: list[LookupRecord], off_choi
 
 
 def detect_group(pak: bytes, records: list[LookupRecord], requested_group: Optional[int], off_choice: str):
-    """Find the best archive ID/offset unit by VAGp signatures at lookup offsets."""
+    """Find the best archive ID/offset unit using VAGp or GTA SA stream headers."""
     groups = sorted({r.archive_id for r in records})
     units = [off_choice] if off_choice in ("Bytes", "2048-byte LBA sectors") else ["Bytes", "2048-byte LBA sectors"]
     candidates = []
@@ -325,19 +331,31 @@ def detect_group(pak: bytes, records: list[LookupRecord], requested_group: Optio
         for unit in units:
             sigs = 0
             valid = 0
+            vag_valid = 0
+            stream_valid = 0
             in_bounds = 0
             for rec in group_records:
                 off = offset_to_bytes(rec.offset_value, unit)
                 if 0 <= off < len(pak):
                     in_bounds += 1
                     vh = vag_header(pak, off)
-                    if vh:
+                    if vh and vh["exact_size"] <= len(pak) - off:
                         sigs += 1
-                        if vh["exact_size"] <= len(pak) - off:
+                        valid += 1
+                        vag_valid += 1
+                    else:
+                        # GTA SA PS2 radio tracks use a distinct 8,068-byte
+                        # stream metadata header, not the standalone VAGp container.
+                        sh = gta_sa_stream_header(pak, off)
+                        if sh is not None and off + sh["header_size"] <= len(pak):
+                            sigs += 1
                             valid += 1
-            # Valid embedded VAG headers dominate, in-bounds hits break ties.
+                            stream_valid += 1
+            # Both recognized header kinds count as a strong location hit.
             score = valid * 1000 + sigs * 10 + in_bounds * 0.001
-            candidates.append((score, gid, unit, len(group_records), valid, sigs, in_bounds))
+            # Tuple fields 4-6 remain compatibility stats used by callers:
+            # recognized headers, signature hits, and in-bounds offsets.
+            candidates.append((score, gid, unit, len(group_records), valid, sigs, in_bounds, vag_valid, stream_valid))
     if not candidates:
         raise FormatError("No lookup-table archive groups matched the selected group ID.")
     candidates.sort(reverse=True)
@@ -392,12 +410,13 @@ def detect_group(pak: bytes, records: list[LookupRecord], requested_group: Optio
                         )
                 return raw_best[1], raw_best[2], raw_best
         details = "; ".join(
-            f"ID 0x{c[1]:02X} / {c[2]}: {c[4]} valid VAGp headers in {c[3]} records"
+            f"ID 0x{c[1]:02X} / {c[2]}: {c[4]} recognized VAGp/stream headers in {c[3]} records"
             for c in candidates[:6]
         )
         raise FormatError(
-            "No valid VAGp headers were found at the candidate offsets. PS2 radio entries can be raw ADPCM fragments, "
-            "so select the station's known archive ID (or rename the PAK to its standard station name) and try again.\n" + details
+            "No recognized VAGp or GTA SA PS2 stream headers were found at the candidate offsets. "
+            "The PAK/lookup pair may not match, or the lookup offset unit may be wrong. "
+            "Try selecting the archive ID and offset unit manually.\n" + details
         )
     # If equally good variants remain, favour byte offsets unless sector offsets identify more tracks.
     ties = [c for c in candidates if c[4] == best[4] and c[5] == best[5]]
@@ -1061,14 +1080,18 @@ def run_self_test():
         verify_dir = stream_dir / "verify"
         assert extract_tracks(stream_pak, stream_lookup, extracted, "Auto-detect", "Auto-detect", "Auto-detect")[0] == 2
         inspected = inspect_archive(stream_pak, stream_lookup, "Auto-detect", "Auto-detect", "Auto-detect")
-        assert inspected[6][0].sample_rate == PS2_RADIO_SAMPLE_RATE, (
-            "PS2 stream playback rate must be fixed at 32000 Hz, not inferred from legacy metadata"
+        assert inspected[6][0].sample_rate == 24000, (
+            "PS2 replacement rate must match the 24000 Hz values stored in the source stream header"
         )
+        assert inspected[7][4] == 2, (
+            "Archive detection must count GTA SA stream headers even when there are no standalone VAGp headers"
+        )
+        assert sum(t.has_stream_header for t in inspected[6]) == 2 and sum(t.is_vag for t in inspected[6]) == 0
         # Legacy fields are metadata, not a signature/rate constraint.
         unusual_header = bytearray(stream_pak.read_bytes()[:GTASA_STREAM_HEADER_SIZE])
         struct.pack_into("<I", unusual_header, GTASA_STREAM_RATE_OFFSETS[0], 0)
         struct.pack_into("<I", unusual_header, GTASA_STREAM_RATE_OFFSETS[1], 48000)
-        assert gta_sa_stream_header(bytes(unusual_header))['sample_rate'] == PS2_RADIO_SAMPLE_RATE
+        assert gta_sa_stream_header(bytes(unusual_header))['sample_rate'] == 24000
         assert (extracted / "entry_0000.hdr").stat().st_size == GTASA_STREAM_HEADER_SIZE
         replacement_payload = bytes(range(32)) * 10
         # Put replacement in the active extraction folder, exactly as the GUI now does.
