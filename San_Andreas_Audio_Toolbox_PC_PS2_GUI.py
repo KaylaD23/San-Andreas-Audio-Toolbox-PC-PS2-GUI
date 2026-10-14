@@ -34,7 +34,14 @@ except ImportError:
     _TkBase = tk.Tk
     DND_AVAILABLE = False
 
-APP_TITLE = "San Andreas Audio Toolbox PC/PS2 GUI v2.1"
+try:
+    from PIL import Image, ImageTk
+    PIL_AVAILABLE = True
+except ImportError:
+    Image = ImageTk = None
+    PIL_AVAILABLE = False
+
+APP_TITLE = "San Andreas Audio Toolbox PC/PS2 GUI v3.0"
 STATIONS = {
     "AA.PAK": "Police Radio / audio cues",
     "ADVERTS.PAK": "Advertisements",
@@ -82,13 +89,26 @@ class Studio(_TkBase):
     def __init__(self):
         super().__init__()
         self.title(APP_TITLE)
-        self.geometry("1200x860")
-        self.minsize(1040, 740)
-        self.configure(bg="#111827")
+        self.geometry("1360x1080")
+        self.minsize(1000, 720)
+        if sys.platform == "win32":
+            # The reference is a maximized working window; do the same on Windows.
+            self.after(80, lambda: self.state("zoomed"))
+        self.configure(bg="#151914")
+
+        self._header_base_image = None
+        self._header_photo = None
+        self._header_tk_native = None
+        self._header_ppm_cache = None
+        self._header_ppm_size = None
+        self._header_last_size = None
+        self._banner_container = None
+        self._app_icon_photo = None
+        self._set_app_icon()
 
         self.pak_var = tk.StringVar()
         self.lookup_var = tk.StringVar()
-        self.station_var = tk.StringVar(value="RE.PAK — K-Jah Radio West")
+        self.station_var = tk.StringVar(value="TK.PAK — WCTR")
         self.group_var = tk.StringVar(value="Auto-detect")
         self.offset_var = tk.StringVar(value="Auto-detect")
         self.size_var = tk.StringVar(value="Auto-detect")
@@ -119,42 +139,74 @@ class Studio(_TkBase):
         self._station_changed()
 
     def _set_style(self):
+        """GTA: San Andreas-inspired olive, asphalt and warm parchment theme."""
         style = ttk.Style(self)
         try:
             style.theme_use("clam")
         except tk.TclError:
             pass
         self.colors = {
-            "bg": "#111827", "panel": "#1f2937", "panel2": "#263244",
-            "fg": "#e5edf7", "muted": "#a8b5c7", "accent": "#60a5fa",
-            "accent2": "#2563eb", "border": "#374151", "good": "#6ee7b7",
-            "warn": "#fbbf24", "bad": "#fca5a5",
+            "bg": "#151914",
+            "panel": "#22281f",
+            "panel2": "#303a2b",
+            "panel3": "#394532",
+            "fg": "#f3ead1",
+            "muted": "#c3b899",
+            "accent": "#b9c99e",
+            "accent2": "#4f6a43",
+            "accent_hover": "#668458",
+            "border": "#b8a879",
+            "gold": "#e0cb94",
+            "good": "#9fca8d",
+            "warn": "#e7b366",
+            "bad": "#d98b77",
         }
-        style.configure(".", background=self.colors["bg"], foreground=self.colors["fg"], font=("Segoe UI", 10))
-        style.configure("TFrame", background=self.colors["bg"])
-        style.configure("Panel.TFrame", background=self.colors["panel"])
-        style.configure("TLabel", background=self.colors["bg"], foreground=self.colors["fg"])
-        style.configure("Muted.TLabel", background=self.colors["bg"], foreground=self.colors["muted"])
-        style.configure("Panel.TLabel", background=self.colors["panel"], foreground=self.colors["fg"])
-        style.configure("Header.TLabel", background=self.colors["bg"], foreground="#f8fafc", font=("Segoe UI", 22, "bold"))
-        style.configure("Subheader.TLabel", background=self.colors["bg"], foreground=self.colors["muted"], font=("Segoe UI", 10))
-        style.configure("CardTitle.TLabel", background=self.colors["panel"], foreground="#f8fafc", font=("Segoe UI", 11, "bold"))
-        style.configure("TButton", background=self.colors["panel2"], foreground=self.colors["fg"], padding=(11, 7), borderwidth=0)
-        style.map("TButton", background=[("active", "#3a4b63"), ("disabled", "#263244")], foreground=[("disabled", "#718096")])
-        style.configure("Accent.TButton", background=self.colors["accent2"], foreground="#ffffff", font=("Segoe UI", 10, "bold"), padding=(13, 8))
-        style.map("Accent.TButton", background=[("active", "#1d4ed8")])
-        style.configure("TEntry", fieldbackground="#0b1220", foreground=self.colors["fg"], insertcolor="#ffffff", bordercolor=self.colors["border"], padding=6)
-        style.configure("TCombobox", fieldbackground="#0b1220", background=self.colors["panel2"], foreground=self.colors["fg"], arrowcolor=self.colors["fg"], padding=5)
-        style.map("TCombobox", fieldbackground=[("readonly", "#0b1220")], foreground=[("readonly", self.colors["fg"])])
-        style.configure("TLabelframe", background=self.colors["panel"], foreground=self.colors["fg"], bordercolor=self.colors["border"])
-        style.configure("TLabelframe.Label", background=self.colors["panel"], foreground=self.colors["accent"], font=("Segoe UI", 10, "bold"))
-        style.configure("TNotebook", background=self.colors["bg"], borderwidth=0)
-        style.configure("TNotebook.Tab", background=self.colors["panel"], foreground=self.colors["muted"], padding=(14, 8))
-        style.map("TNotebook.Tab", background=[("selected", self.colors["accent2"])], foreground=[("selected", "#ffffff")])
-        style.configure("Treeview", background="#0b1220", fieldbackground="#0b1220", foreground=self.colors["fg"], bordercolor=self.colors["border"], rowheight=26)
-        style.configure("Treeview.Heading", background=self.colors["panel2"], foreground="#f8fafc", padding=7, font=("Segoe UI", 9, "bold"))
-        style.map("Treeview", background=[("selected", "#1d4ed8")], foreground=[("selected", "#ffffff")])
-        style.configure("Horizontal.TProgressbar", troughcolor="#0b1220", background=self.colors["accent"])
+        c = self.colors
+        base_font = ("Segoe UI", 10)
+        style.configure(".", background=c["bg"], foreground=c["fg"], font=base_font)
+        style.configure("TFrame", background=c["bg"])
+        style.configure("Panel.TFrame", background=c["panel"])
+        style.configure("Surface.TFrame", background="#0d120f")
+        style.configure("TLabel", background=c["bg"], foreground=c["fg"])
+        style.configure("Muted.TLabel", background=c["bg"], foreground=c["muted"])
+        style.configure("Panel.TLabel", background=c["panel"], foreground=c["fg"])
+        style.configure("Surface.TLabel", background="#0d120f", foreground=c["fg"])
+        style.configure("Header.TLabel", background=c["bg"], foreground=c["fg"], font=("Georgia", 23, "bold"))
+        style.configure("Subheader.TLabel", background=c["bg"], foreground=c["muted"], font=("Segoe UI", 10))
+        style.configure("CardTitle.TLabel", background=c["panel"], foreground=c["gold"], font=("Segoe UI", 11, "bold"))
+
+        style.configure("TButton", background=c["panel2"], foreground=c["fg"],
+                        padding=(11, 7), borderwidth=1, bordercolor=c["border"],
+                        lightcolor=c["panel3"], darkcolor="#11150f", relief="raised")
+        style.map("TButton",
+                  background=[("active", c["accent_hover"]), ("pressed", c["accent2"]), ("disabled", c["panel"])],
+                  foreground=[("disabled", "#827e70")],
+                  bordercolor=[("active", c["gold"])])
+        style.configure("Accent.TButton", background=c["accent2"], foreground="#fff4d8",
+                        font=("Segoe UI", 10, "bold"), padding=(13, 8), borderwidth=1,
+                        bordercolor=c["gold"], lightcolor=c["accent_hover"], darkcolor="#172016", relief="raised")
+        style.map("Accent.TButton", background=[("active", c["accent_hover"]), ("pressed", "#2f472b")], foreground=[("disabled", "#aaa58d")])
+        style.configure("TEntry", fieldbackground="#0b100d", foreground=c["fg"], insertcolor="#fff7e0",
+                        bordercolor=c["border"], lightcolor=c["border"], darkcolor="#0a0d0a", padding=6)
+        style.map("TEntry", bordercolor=[("focus", c["gold"])])
+        style.configure("TCombobox", fieldbackground="#0b100d", background=c["panel2"], foreground=c["fg"],
+                        arrowcolor=c["fg"], bordercolor=c["border"], lightcolor=c["border"], darkcolor="#0a0d0a", padding=5)
+        style.map("TCombobox", fieldbackground=[("readonly", "#0b100d"), ("focus", "#101710")],
+                  foreground=[("readonly", c["fg"])], background=[("active", c["accent2"])])
+        style.configure("TLabelframe", background=c["panel"], foreground=c["fg"], bordercolor=c["border"], relief="solid", borderwidth=1)
+        style.configure("TLabelframe.Label", background=c["panel"], foreground=c["gold"], font=("Segoe UI", 10, "bold"))
+        style.configure("TNotebook", background=c["bg"], borderwidth=0, tabmargins=(0, 2, 0, 0))
+        style.configure("TNotebook.Tab", background=c["panel2"], foreground=c["muted"], padding=(14, 8), borderwidth=1)
+        style.map("TNotebook.Tab", background=[("selected", c["accent2"]), ("active", c["panel3"])],
+                  foreground=[("selected", "#fff4d8"), ("active", c["fg"])], bordercolor=[("selected", c["gold"])])
+        style.configure("Treeview", background="#0b100d", fieldbackground="#0b100d", foreground=c["fg"],
+                        bordercolor=c["border"], rowheight=28, relief="flat", font=("Segoe UI", 10))
+        style.configure("Treeview.Heading", background=c["panel2"], foreground=c["gold"], padding=(8, 8),
+                        font=("Segoe UI", 9, "bold"), bordercolor=c["border"], relief="raised")
+        style.map("Treeview", background=[("selected", "#4b6340")], foreground=[("selected", "#fff4d8")])
+        style.configure("Vertical.TScrollbar", background=c["panel2"], troughcolor="#0b100d", arrowcolor=c["fg"], bordercolor=c["border"])
+        style.configure("Horizontal.TScrollbar", background=c["panel2"], troughcolor="#0b100d", arrowcolor=c["fg"], bordercolor=c["border"])
+        style.configure("Horizontal.TProgressbar", troughcolor="#0b100d", background=c["accent2"], bordercolor=c["border"])
 
     def _build_menu(self):
         menu = tk.Menu(self, tearoff=False, bg=self.colors["panel"], fg=self.colors["fg"], activebackground=self.colors["accent2"], activeforeground="#ffffff")
@@ -172,24 +224,44 @@ class Studio(_TkBase):
         self.config(menu=menu)
 
     def _build_ui(self):
-        outer = ttk.Frame(self, padding=(18, 15, 18, 12))
+        # The banner bleeds to the full client width. Main work panels stay inset, like the reference.
+        outer = ttk.Frame(self, padding=(0, 8, 0, 7))
         outer.pack(fill="both", expand=True)
 
-        header = ttk.Frame(outer)
-        header.pack(fill="x", pady=(0, 12))
-        titleblock = ttk.Frame(header)
-        titleblock.pack(side="left", fill="x", expand=True)
-        ttk.Label(titleblock, text="San Andreas Audio Toolbox PC/PS2 GUI", style="Header.TLabel").pack(anchor="w")
-        ttk.Label(titleblock, text="GTA: San Andreas · PC SAAT streams + PlayStation 2 radio PAKs", style="Subheader.TLabel").pack(anchor="w", pady=(2, 0))
-        tk.Label(header, text="PC + PS2", bg="#163451", fg="#93c5fd", font=("Segoe UI", 9, "bold"), padx=12, pady=7).pack(side="right", anchor="n")
+        # The supplied GTA SA artwork is used as a real, responsive full-width banner.
+        banner_path = Path(__file__).resolve().parent / "assets" / "gtasa_header.png"
+        self._banner_container = outer
+        self.banner_label = tk.Label(outer, text="SAN ANDREAS AUDIO TOOLBOX  ·  PC + PS2",
+                                     bg=self.colors["bg"], fg=self.colors["gold"],
+                                     font=("Georgia", 18, "bold"), bd=0, padx=12, pady=12, anchor="w")
+        if banner_path.is_file():
+            try:
+                if PIL_AVAILABLE:
+                    self._header_base_image = Image.open(banner_path).convert("RGB")
+                    self._header_photo = ImageTk.PhotoImage(self._header_base_image)
+                else:
+                    self._header_tk_native = tk.PhotoImage(file=str(banner_path))
+                    self._header_photo = self._header_tk_native
+                self.banner_label.configure(image=self._header_photo, text="", compound="center")
+            except Exception:
+                pass
+        self.banner_label.pack(fill="x", pady=(0, 8))
+        # Resize from the actual outer/client width, not the image label's requested
+        # width. This avoids the banner staying at its source-image width on systems
+        # without Pillow and on maximized/DPI-scaled Windows windows.
+        outer.bind("<Configure>", self._resize_header_banner, add="+")
+        self.after_idle(self._resize_header_banner)
 
-        source = ttk.LabelFrame(outer, text="  1  ·  Project source  ", padding=(12, 8))
-        source.pack(fill="x", pady=(0, 10))
+        content = ttk.Frame(outer, padding=(10, 0, 10, 0))
+        content.pack(fill="both", expand=True)
+
+        source = ttk.LabelFrame(content, text="  1  ·  Project source  ", padding=(12, 8))
+        source.pack(fill="x", pady=(0, 8))
         row = ttk.Frame(source, style="Panel.TFrame")
         row.pack(fill="x", pady=3)
         ttk.Label(row, text="Radio station", style="Panel.TLabel", width=14).pack(side="left")
         station_values = [f"{fname} — {name}" for fname, name in STATIONS.items()]
-        self.station_combo = ttk.Combobox(row, textvariable=self.station_var, values=station_values, state="readonly", width=43)
+        self.station_combo = ttk.Combobox(row, textvariable=self.station_var, values=station_values, state="readonly", width=34)
         self.station_combo.pack(side="left", padx=(0, 8))
         self.station_combo.bind("<<ComboboxSelected>>", self._on_station_selected)
         ttk.Label(row, textvariable=self.project_state, style="Panel.TLabel").pack(side="left", padx=8)
@@ -201,30 +273,30 @@ class Studio(_TkBase):
         ttk.Label(format_row, text="Archive ID", style="Panel.TLabel").pack(side="left")
         ttk.Combobox(format_row, textvariable=self.group_var, values=["Auto-detect"] + [f"0x{i:02X}" for i in range(256)], state="readonly", width=13).pack(side="left", padx=(7, 16))
         ttk.Label(format_row, text="Offset units", style="Panel.TLabel").pack(side="left")
-        ttk.Combobox(format_row, textvariable=self.offset_var, values=["Auto-detect", "Bytes", "2048-byte LBA sectors"], state="readonly", width=22).pack(side="left", padx=(7, 16))
+        ttk.Combobox(format_row, textvariable=self.offset_var, values=["Auto-detect", "Bytes", "2048-byte LBA sectors"], state="readonly", width=19).pack(side="left", padx=(7, 16))
         ttk.Label(format_row, text="Size units", style="Panel.TLabel").pack(side="left")
-        ttk.Combobox(format_row, textvariable=self.size_var, values=["Auto-detect", "Bytes", "2048-byte LBA sectors"], state="readonly", width=22).pack(side="left", padx=7)
+        ttk.Combobox(format_row, textvariable=self.size_var, values=["Auto-detect", "Bytes", "2048-byte LBA sectors"], state="readonly", width=19).pack(side="left", padx=7)
 
-        actions = ttk.Frame(outer)
-        actions.pack(fill="x", pady=(0, 10))
+        actions = ttk.Frame(content)
+        actions.pack(fill="x", pady=(0, 8))
         ttk.Button(actions, text="Inspect archive", style="Accent.TButton", command=self.inspect).pack(side="left", padx=(0, 7))
         ttk.Button(actions, text="Extract tracks", command=self.extract).pack(side="left", padx=(0, 7))
-        # Keep the final rebuild action in the always-visible main action row.
-        # The full workflow is also available inside Track Browser, but the
-        # expanding track list can push its lower controls below the viewport.
-        self.main_rebuild_button = ttk.Button(
-            actions, text="REBUILD ARCHIVE + VERIFY", style="Accent.TButton", command=self.rebuild
-        )
+        self.main_rebuild_button = ttk.Button(actions, text="REBUILD ARCHIVE + VERIFY", style="Accent.TButton", command=self.rebuild)
         self.main_rebuild_button.pack(side="left", padx=(0, 7))
         ttk.Label(actions, text="Replacement and conversion tools: Track Browser", style="Muted.TLabel").pack(side="right")
 
-        # Only two navigation tabs remain. Replacement, conversion, output, and
-        # rebuild controls are all available in the Track Browser workspace.
-        self.tabs = ttk.Notebook(outer)
+        # Reserve the compact status strip first so the expandable notebook cannot push it off-screen.
+        footer = ttk.Frame(content)
+        footer.pack(side="bottom", fill="x", pady=(7, 0))
+        tk.Frame(footer, bg=self.colors["border"], height=1).pack(fill="x", pady=(0, 5))
+        ttk.Label(footer, textvariable=self.status_var).pack(side="left", fill="x", expand=True)
+        ttk.Label(footer, text="BACK UP FIRST  ·  TEST IN PCSX2", style="Muted.TLabel").pack(side="right")
+
+        self.tabs = ttk.Notebook(content)
         self.tabs.pack(fill="both", expand=True)
-        self.browser_tab = ttk.Frame(self.tabs, padding=12)
-        self.log_tab = ttk.Frame(self.tabs, padding=12)
-        self.pc_tab = ttk.Frame(self.tabs, padding=12)
+        self.browser_tab = ttk.Frame(self.tabs, padding=(10, 9, 10, 8))
+        self.log_tab = ttk.Frame(self.tabs, padding=10)
+        self.pc_tab = ttk.Frame(self.tabs, padding=10)
         self.tabs.add(self.browser_tab, text="PS2 Track Browser")
         self.tabs.add(self.pc_tab, text="PC SAAT")
         self.tabs.add(self.log_tab, text="Activity Log")
@@ -232,11 +304,165 @@ class Studio(_TkBase):
         self._build_pc_tab()
         self._build_log_tab()
 
-        footer = ttk.Frame(outer)
-        footer.pack(fill="x", pady=(10, 0))
-        tk.Frame(footer, bg=self.colors["accent2"], height=2).pack(fill="x", pady=(0, 7))
-        ttk.Label(footer, textvariable=self.status_var).pack(side="left", fill="x", expand=True)
-        ttk.Label(footer, text="Back up first · test in PCSX2", style="Muted.TLabel").pack(side="right")
+    def _set_app_icon(self):
+        """Apply the supplied SA emblem without letting Tk replace the native Windows ICO."""
+        assets = Path(__file__).resolve().parent / "assets"
+        ico_path = assets / "sa_app_icon.ico"
+        png_path = assets / "sa_app_icon.png"
+        png_64_path = assets / "sa_app_icon_64.png"
+        # Explicitly set the icon on THIS root window. The `default=` argument
+        # only establishes an icon for subsequently created toplevels on some Tk
+        # builds, which can leave the main title bar showing Tk's generic icon.
+        # The ICO contains pre-rendered native sizes so Windows can select a sharp
+        # rendition instead of scaling one PNG for every surface.
+        if sys.platform == "win32" and ico_path.is_file():
+            try:
+                self.iconbitmap(str(ico_path))
+                try:
+                    self.iconbitmap(default=str(ico_path))
+                except tk.TclError:
+                    pass
+                return
+            except tk.TclError:
+                pass
+        # Other platforms use the requested 64x64 PNG asset. Keep a reference
+        # to prevent Tk from garbage-collecting the image.
+        fallback = png_64_path if png_64_path.is_file() else png_path
+        if fallback.is_file():
+            try:
+                self._app_icon_photo = tk.PhotoImage(file=str(fallback))
+                self.iconphoto(True, self._app_icon_photo)
+            except tk.TclError:
+                pass
+
+    @staticmethod
+    def _parse_ppm(data: bytes):
+        """Read the P6 PPM format emitted by Tk PhotoImage.write()."""
+        index = 0
+        tokens = []
+        length = len(data)
+        while len(tokens) < 4 and index < length:
+            while index < length:
+                value = data[index]
+                if value in b" \t\r\n":
+                    index += 1
+                elif value == 35:  # '#'
+                    while index < length and data[index] not in (10, 13):
+                        index += 1
+                else:
+                    break
+            start = index
+            while index < length and data[index] not in b" \t\r\n#":
+                index += 1
+            if index > start:
+                tokens.append(data[start:index])
+        if len(tokens) != 4 or tokens[0] != b"P6":
+            raise ValueError("Tk did not export the banner as a binary PPM image")
+        width, height, maxval = int(tokens[1]), int(tokens[2]), int(tokens[3])
+        # Skip the separator after maxval (CRLF if emitted as a two-byte newline).
+        if index < length and data[index] == 13 and index + 1 < length and data[index + 1] == 10:
+            index += 2
+        elif index < length and data[index] in b" \t\r\n":
+            index += 1
+        if maxval != 255:
+            raise ValueError("Unsupported PPM channel depth")
+        expected = width * height * 3
+        rgb = data[index:index + expected]
+        if len(rgb) != expected:
+            raise ValueError("Truncated PPM banner image")
+        return (width, height), rgb
+
+    def _get_header_rgb_fallback(self):
+        """Cache the source banner as RGB bytes when Pillow is unavailable."""
+        if self._header_ppm_cache is not None:
+            return self._header_ppm_size, self._header_ppm_cache
+        native = self._header_tk_native
+        if native is None:
+            return None, None
+        import tempfile
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".ppm", delete=False) as temp:
+                temp_path = temp.name
+            native.write(temp_path, format="ppm")
+            image_size, rgb = self._parse_ppm(Path(temp_path).read_bytes())
+            self._header_ppm_size, self._header_ppm_cache = image_size, rgb
+            return image_size, rgb
+        finally:
+            if temp_path:
+                try:
+                    Path(temp_path).unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    @staticmethod
+    def _bilinear_rgb(source_size, source_rgb, out_width, out_height):
+        """Pure-Python bilinear resize used as a Pillow-free fallback."""
+        sw, sh = source_size
+        if sw == out_width and sh == out_height:
+            return source_rgb
+        out = bytearray(out_width * out_height * 3)
+        xscale = (sw - 1) / max(1, out_width - 1)
+        yscale = (sh - 1) / max(1, out_height - 1)
+        out_i = 0
+        for y in range(out_height):
+            sy = y * yscale
+            y0 = int(sy); y1 = min(y0 + 1, sh - 1); fy = sy - y0
+            row0 = y0 * sw * 3
+            row1 = y1 * sw * 3
+            for x in range(out_width):
+                sx = x * xscale
+                x0 = int(sx); x1 = min(x0 + 1, sw - 1); fx = sx - x0
+                i00 = row0 + x0 * 3; i10 = row0 + x1 * 3
+                i01 = row1 + x0 * 3; i11 = row1 + x1 * 3
+                for channel in range(3):
+                    top = source_rgb[i00 + channel] * (1.0 - fx) + source_rgb[i10 + channel] * fx
+                    bottom = source_rgb[i01 + channel] * (1.0 - fx) + source_rgb[i11 + channel] * fx
+                    out[out_i] = max(0, min(255, int(top * (1.0 - fy) + bottom * fy + 0.5)))
+                    out_i += 1
+        return bytes(out)
+
+    def _resize_header_banner(self, event=None):
+        if self._banner_container is None or not hasattr(self, "banner_label"):
+            return
+        try:
+            # The outer frame spans the full client area, unlike the image's natural width.
+            width = int(event.width) if event is not None else int(self._banner_container.winfo_width())
+            if width < 320:
+                return  # wait for the first real layout pass
+            width = max(320, width)
+            # Slightly taller than a strict aspect-preserving crop, matching the reference.
+            height = max(100, int(width * 0.141))
+            size_key = (width, height)
+            if size_key == self._header_last_size:
+                return
+            self._header_last_size = size_key
+            if PIL_AVAILABLE and self._header_base_image is not None:
+                resized = self._header_base_image.resize((width, height), Image.Resampling.LANCZOS)
+                self._header_photo = ImageTk.PhotoImage(resized)
+            else:
+                source_size, source_rgb = self._get_header_rgb_fallback()
+                if not source_rgb:
+                    return
+                rgb = self._bilinear_rgb(source_size, source_rgb, width, height)
+                import tempfile
+                temp_path = None
+                try:
+                    with tempfile.NamedTemporaryFile(suffix=".ppm", delete=False) as temp:
+                        temp_path = temp.name
+                        temp.write(f"P6\n{width} {height}\n255\n".encode("ascii"))
+                        temp.write(rgb)
+                    self._header_photo = tk.PhotoImage(file=temp_path, format="ppm")
+                finally:
+                    if temp_path:
+                        try:
+                            Path(temp_path).unlink(missing_ok=True)
+                        except OSError:
+                            pass
+            self.banner_label.configure(image=self._header_photo, text="")
+        except Exception:
+            # Keep the native image rather than preventing the rest of the UI from opening.
+            pass
 
     def _path_row(self, parent, label, variable, command, hint=""):
         row = ttk.Frame(parent, style="Panel.TFrame")
@@ -249,37 +475,42 @@ class Studio(_TkBase):
             ttk.Label(parent, text=hint, style="Muted.TLabel", font=("Segoe UI", 8)).pack(anchor="w", padx=(116, 0), pady=(0, 1))
 
     def _build_browser_tab(self):
-        bar = ttk.Frame(self.browser_tab)
-        bar.pack(fill="x", pady=(0, 8))
-        ttk.Label(bar, text="Archive contents", font=("Segoe UI", 13, "bold")).pack(side="left")
-        ttk.Label(bar, text="Select a row to replace it, or drop audio to encode and replace one or more tracks.", style="Muted.TLabel").pack(side="left", padx=14)
+        bar = ttk.Frame(self.browser_tab, style="Panel.TFrame", padding=(10, 7))
+        bar.pack(fill="x", pady=(0, 6))
+        ttk.Label(bar, text="Archive contents", style="CardTitle.TLabel", font=("Segoe UI", 13, "bold")).pack(side="left")
+        ttk.Label(bar, text="Select a row to replace it, or drop audio to encode and replace one or more tracks.",
+                  style="Panel.TLabel").pack(side="left", padx=14)
 
+        table_shell = ttk.Frame(self.browser_tab, style="Panel.TFrame", padding=4)
+        table_shell.pack(fill="both", expand=True)
+        table_shell.rowconfigure(0, weight=1)
+        table_shell.columnconfigure(0, weight=1)
         cols = ("entry", "file", "offset", "size", "type", "rate")
-        self.track_tree = ttk.Treeview(self.browser_tab, columns=cols, show="headings", selectmode="browse")
+        self.track_tree = ttk.Treeview(table_shell, columns=cols, show="headings", selectmode="browse", height=6)
         labels = {"entry": "Lookup record", "file": "Extracted file", "offset": "PAK offset", "size": "Size", "type": "Detected format", "rate": "Sample rate"}
-        widths = {"entry": 105, "file": 230, "offset": 130, "size": 125, "type": 145, "rate": 110}
+        widths = {"entry": 150, "file": 270, "offset": 150, "size": 125, "type": 180, "rate": 120}
         for c in cols:
             self.track_tree.heading(c, text=labels[c])
-            self.track_tree.column(c, width=widths[c], anchor="w")
-        ys = ttk.Scrollbar(self.browser_tab, orient="vertical", command=self.track_tree.yview)
-        xs = ttk.Scrollbar(self.browser_tab, orient="horizontal", command=self.track_tree.xview)
+            self.track_tree.column(c, width=widths[c], anchor="center" if c in ("entry", "offset", "size", "rate") else "w", stretch=True)
+        ys = ttk.Scrollbar(table_shell, orient="vertical", command=self.track_tree.yview)
+        xs = ttk.Scrollbar(table_shell, orient="horizontal", command=self.track_tree.xview)
         self.track_tree.configure(yscrollcommand=ys.set, xscrollcommand=xs.set)
-        self.track_tree.pack(side="top", fill="both", expand=True)
-        ys.place(in_=self.track_tree, relx=1, rely=0, relheight=1, anchor="ne")
-        xs.pack(fill="x")
+        self.track_tree.grid(row=0, column=0, sticky="nsew")
+        ys.grid(row=0, column=1, sticky="ns")
+        xs.grid(row=1, column=0, sticky="ew")
 
-        # Drop zone: source audio is transcoded and committed to the selected
-        # extracted entry. It is intentionally the central, prominent control.
-        drop_frame = ttk.LabelFrame(self.browser_tab, text="  Drop audio to encode + replace  ", padding=(10, 7))
-        drop_frame.pack(fill="x", pady=(8, 0))
+        drop_frame = ttk.LabelFrame(self.browser_tab, text="  Drop audio to encode + replace  ", padding=(9, 7))
+        drop_frame.pack(fill="x", pady=(7, 0))
         dnd_hint = (
             "Drag WAV / MP3 / OGG / FLAC / AT3 audio here. Select a starting track first; multiple files fill subsequent rows."
             if DND_AVAILABLE else
-            "Drag-and-drop support is not installed. Use ‘Convert audio into selected track(s)…’ or install requirements.txt."
+            "Drop WAV / MP3 / OGG / FLAC / AT3 audio here. Select a starting track first; click this area to browse for audio."
         )
         self.drop_label = tk.Label(
-            drop_frame, text=dnd_hint, bg="#17263a", fg="#bfdbfe",
-            relief="ridge", bd=1, padx=8, pady=8, cursor="hand2", wraplength=900,
+            drop_frame, text=dnd_hint, bg="#0a100d", fg="#d5dfbe",
+            relief="groove", bd=2, highlightthickness=1, highlightbackground=self.colors["border"],
+            padx=8, pady=9, cursor="hand2", wraplength=1200,
+            font=("Segoe UI", 10), anchor="center",
         )
         self.drop_label.pack(fill="x")
         self.drop_label.bind("<Button-1>", lambda _e: self.pick_audio_for_tracks())
@@ -291,42 +522,52 @@ class Studio(_TkBase):
                 self.track_tree.dnd_bind("<<Drop>>", self._on_audio_drop)
             except Exception as exc:
                 self.dnd_enabled = False
-                self.drop_label.configure(text=f"Drag-and-drop could not initialise: {exc}. Use the conversion button below.")
+                self.drop_label.configure(text=f"Drag-and-drop could not initialise: {exc}. Click here to choose audio files.")
 
-        progress_row = ttk.Frame(self.browser_tab)
-        progress_row.pack(fill="x", pady=(7, 0))
+        toggle_row = ttk.Frame(self.browser_tab)
+        toggle_row.pack(fill="x", pady=(4, 0))
+        self.advanced_toggle = ttk.Button(toggle_row, text="▸  Advanced replacement tools", command=self._toggle_advanced_tools)
+        self.advanced_toggle.pack(side="right")
+
+        # Keep the conversion/status strip visible at all times, as in the reference screenshot.
+        progress_row = ttk.Frame(self.browser_tab, style="Panel.TFrame", padding=(8, 6))
+        progress_row.pack(fill="x", pady=(3, 0))
         self.audio_progress_text = tk.StringVar(value="Ready for audio replacement.")
-        ttk.Label(progress_row, textvariable=self.audio_progress_text, style="Muted.TLabel").pack(side="left", fill="x", expand=True)
+        ttk.Label(progress_row, textvariable=self.audio_progress_text, style="Panel.TLabel").pack(side="left", fill="x", expand=True)
         self.audio_progress = ttk.Progressbar(progress_row, orient="horizontal", mode="determinate", maximum=100, length=260)
         self.audio_progress.pack(side="left", padx=(8, 8))
         self.cancel_audio_button = ttk.Button(progress_row, text="Cancel conversion", command=self.cancel_audio_import, state="disabled")
         self.cancel_audio_button.pack(side="left")
 
-        controls = ttk.Frame(self.browser_tab)
-        controls.pack(fill="x", pady=(8, 0))
+        # Keep the screenshot-inspired main workspace clean; less-frequently used controls remain available here.
+        self.advanced_tools_frame = ttk.Frame(self.browser_tab, style="Panel.TFrame", padding=(8, 7))
+        controls = ttk.Frame(self.advanced_tools_frame, style="Panel.TFrame")
+        controls.pack(fill="x", pady=(0, 7))
         ttk.Button(controls, text="Convert audio into selected track(s)…", style="Accent.TButton", command=self.pick_audio_for_tracks).pack(side="left", padx=(0, 6))
         ttk.Button(controls, text="Replace selected PS2 data…", command=self.replace_selected).pack(side="left", padx=(0, 6))
         ttk.Button(controls, text="Import matching files…", command=self.import_folder).pack(side="left", padx=(0, 6))
         ttk.Button(controls, text="Auto-rename files…", command=self.auto_rename_files).pack(side="left", padx=(0, 6))
         ttk.Button(controls, text="Open extracted folder", command=self.open_extract_folder).pack(side="left")
 
-        # Workspace paths and encoder configuration replace the removed tabs.
-        # They remain editable here so all steps are performed in one screen.
-        workspace = ttk.LabelFrame(self.browser_tab, text="  Replacement workspace  ", padding=(9, 6))
-        workspace.pack(fill="x", pady=(8, 0))
+        workspace = ttk.LabelFrame(self.advanced_tools_frame, text="  Replacement workspace  ", padding=(9, 6))
+        workspace.pack(fill="x")
         self._compact_path_row(workspace, "Extracted tracks", self.extract_var, self._browse_extract, "Folder used by replace/import/rebuild")
         self._compact_path_row(workspace, "Output folder", self.output_var, self._browse_output, "Destination for the new PAK and matching lookup")
         self._compact_path_row(workspace, "FFmpeg executable", self.ffmpeg_var, self._browse_ffmpeg, "Optional if ffmpeg is already on PATH")
-
         workflow = ttk.Frame(workspace, style="Panel.TFrame")
         workflow.pack(fill="x", pady=(5, 0))
         ttk.Button(workflow, text="Rebuild PAK + lookup and verify", style="Accent.TButton", command=self.rebuild).pack(side="left", padx=(0, 7))
         ttk.Button(workflow, text="Open output folder", command=self.open_output_folder).pack(side="left", padx=(0, 10))
-        ttk.Label(
-            workflow,
-            text="Use NEW-*.PAK + NEW-TRAKLKUP.DAT together; replace AUDIO/STREAMS and AUDIO/CONFIG, rebuild the ISO, then test in PCSX2.",
-            style="Muted.TLabel", wraplength=600, justify="left"
-        ).pack(side="left", fill="x", expand=True)
+        ttk.Label(workflow, text="Use NEW-*.PAK + NEW-TRAKLKUP.DAT together; back up game files and test the rebuild in PCSX2.",
+                  style="Panel.TLabel", wraplength=600, justify="left").pack(side="left", fill="x", expand=True)
+
+    def _toggle_advanced_tools(self):
+        if self.advanced_tools_frame.winfo_manager():
+            self.advanced_tools_frame.pack_forget()
+            self.advanced_toggle.configure(text="▸  Advanced replacement tools")
+        else:
+            self.advanced_tools_frame.pack(fill="x", pady=(3, 0))
+            self.advanced_toggle.configure(text="▾  Hide advanced replacement tools")
 
     def _compact_path_row(self, parent, label, variable, command, hint=""):
         row = ttk.Frame(parent, style="Panel.TFrame")
@@ -473,7 +714,7 @@ class Studio(_TkBase):
         ttk.Button(toolbar, text="Clear log", command=self.clear_log).pack(side="right")
         frame = ttk.Frame(self.log_tab)
         frame.pack(fill="both", expand=True)
-        self.log_text = tk.Text(frame, wrap="word", bg="#0b1220", fg="#dce6f3", insertbackground="#ffffff", relief="flat", padx=10, pady=9, font=("Consolas", 9), state="disabled")
+        self.log_text = tk.Text(frame, wrap="word", bg="#0b100d", fg="#e9e1c9", insertbackground="#fff4d8", relief="flat", padx=10, pady=9, font=("Consolas", 9), state="disabled", highlightthickness=1, highlightbackground=self.colors["border"])
         ys = ttk.Scrollbar(frame, orient="vertical", command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=ys.set)
         self.log_text.pack(side="left", fill="both", expand=True)

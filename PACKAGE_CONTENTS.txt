@@ -1,0 +1,25 @@
+San Andreas Audio Toolbox PC/PS2 GUI v3.0 — header banner update, 64x64 icon
+
+This package includes the main toolbox GUI, supporting PS2 archive/audio modules,
+main application launchers, dependencies, documentation, changelog, and theme assets.
+
+Primary files:
+  San_Andreas_Audio_Toolbox_PC_PS2_GUI.py
+  PS2_Audio_Encoder.py
+  PS2_PAK_Core.py
+  Launch_San_Andreas_Audio_Toolbox_PC_PS2_GUI.bat
+  Launch_San_Andreas_Audio_Toolbox_PC_PS2_GUI.sh
+  Setup_Dependencies.bat
+
+Windows: run Launch_San_Andreas_Audio_Toolbox_PC_PS2_GUI.bat.
+Linux/macOS: run bash Launch_San_Andreas_Audio_Toolbox_PC_PS2_GUI.sh.
+
+Icon assets:
+  assets/sa_app_icon.ico — single 64x64 image in ICO format
+  assets/sa_app_icon.png — 64x64 PNG fallback
+  assets/sa_app_icon_64.png — 64x64 PNG icon
+  assets/sa_app_icon_source.png — original high-resolution source artwork
+
+The custom icon is intentionally supplied at 64x64 only, as requested.
+
+Banner update (v3.0): decorative Los Santos lettering removed from the right side of assets/gtasa_header.png.

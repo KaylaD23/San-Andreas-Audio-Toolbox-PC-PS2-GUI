@@ -1,7 +1,31 @@
-SAN ANDREAS AUDIO TOOLBOX PC/PS2 GUI v2.1
+SAN ANDREAS AUDIO TOOLBOX PC/PS2 GUI v3.0
 ========================================
 
 A dual-platform GUI for Grand Theft Auto: San Andreas audio workflows.
+
+THEME UPDATE (v3.0)
+-------------------
+- Removed the decorative “Los Santos” lettering from the right side of the header banner.
+- Filled the cleared area with matching sunset skyline artwork and kept the PC + PS2 badge.
+
+THEME UPDATE (v2.6)
+-------------------
+- Rebuilt the supplied SA emblem from the original source image at high quality, keeping its white background and strong outlines.
+- Re-exported a multi-resolution Windows ICO with small-size renditions optimised for title bars and taskbars.
+- Fixed Windows icon setup so Tk does not override the native ICO with a single large PNG, which was making the small icon appear muddy.
+- Retained the responsive full-width banner and Pillow-free banner resize fallback from v2.4.
+
+THEME UPDATE (v2.4)
+-------------------
+- Fixed banner scaling to use the actual full client width, including on maximized/DPI-scaled windows.
+- Added a Pillow-free banner resize fallback so the artwork can still fill the window if Pillow has not yet been installed.
+
+THEME UPDATE (v2.3)
+-------------------
+The interface uses a full-width, taller San Andreas-inspired sunset banner, olive-green
+panels, warm gold borders, dark archive surfaces, a persistent audio status strip, and a simplified main workspace.
+The “Advanced replacement tools & workspace” control expands the less-frequently
+used audio replacement controls without crowding the main archive view.
 
 TABS
 ----
@@ -24,8 +48,10 @@ PC SAAT WORKFLOW
 5. Click IMPORT / REBUILD PC STREAM. The original SAAT tool creates the output
    stream and updates the selected lookup copy.
 
-The bundled original saat_stream.exe is Windows-only. The rest of the GUI and
-PS2 tools are Python-based; PC SAAT operations require Windows.
+The PC SAAT tab expects the original Windows utility at saat/saat_stream.exe.
+That executable was not present in the source ZIP supplied for this rebuild, so add
+a legitimate copy at that path to enable PC stream export/import. The rest of the GUI
+and PS2 tools are Python-based; PC SAAT operations require Windows.
 
 PS2 WORKFLOW
 ------------
@@ -65,3 +91,5 @@ NOTES
 SELF TEST
 ---------
 python San_Andreas_Audio_Toolbox_PC_PS2_GUI.py --self-test
+
+Icon note (v2.8): the custom SA ICO is explicitly applied to the main Tk window. If Windows continues showing a cached old icon, close all instances and relaunch the app.
