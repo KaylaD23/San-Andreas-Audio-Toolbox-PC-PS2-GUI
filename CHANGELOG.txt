@@ -1,4 +1,52 @@
+v3.0 — Header banner cleanup
+- Removed the “Los Santos” text on the right side of the header art.
+- Reconstructed that area using matching sunset skyline and car artwork; retained the PC + PS2 badge.
+- Updated the application title to v3.0.
+
+v2.9 icon update — 64x64 only
+- Replaced the previous 32x32 app icon asset with the provided 64x64 emblem.
+- The ICO contains a single 64x64 image; PNG fallback is also 64x64.
+- Removed the old 32x32 fallback asset and updated GUI icon loading.
+
+v2.9 — Use the supplied SA emblem as a 32x32 application icon; bundle a 32x32-only ICO and PNG for the GUI.
 San Andreas Audio Toolbox PC/PS2 GUI — Changelog
+
+v2.7
+- Replaced the prior icon with the exact SA emblem image most recently supplied by the user.
+- Cropped only transparent outer canvas, preserved the original artwork, and generated multi-resolution Windows ICO assets (16–256 px).
+- Uses the native ICO on Windows and a dedicated 64px PNG fallback on other platforms.
+
+v2.6
+- Rebuilt the SA icon from the user's original emblem at higher quality, preserving its supplied white background.
+- Regenerated a multi-resolution Windows ICO (16–256 px) for clearer small icon rendering.
+- Fixed icon loading order: Windows now uses the native ICO without a later PNG iconphoto override.
+
+v2.5
+- Replaced the generated icon with the exact SA emblem image supplied by the user.
+- Added a transparent PNG app icon and multi-resolution Windows ICO (16–256 px).
+- Preserved enclosed white lettering while making the outside white canvas transparent.
+
+v2.4
+v2.4
+- Added a custom SA monogram app icon for the title bar and Windows taskbar, with PNG/ICO assets included.
+- Fixed banner resizing to use the outer client frame width rather than the image label's natural/requested width.
+- Added a pure-Tk/Python RGB resize fallback so full-width banner behavior does not depend on Pillow being installed.
+- Verified both Pillow and Pillow-free GUI layouts at a 1656 px client width; banner image and client widths match.
+
+v2.3
+- Fixed the GTA SA banner so the artwork fills the entire window client width edge-to-edge.
+- Matched the taller hero-banner proportions and maximized-on-launch Windows layout.
+- Kept the audio replacement status/progress strip visible while advanced controls are collapsed.
+- Kept source/archive panels inset for readable alignment with the reference screenshot.
+- Updated the default launch geometry for a taller archive workspace.
+
+
+v2.2
+- Rebuilt the desktop interface around the GTA: San Andreas-themed sunset/banner artwork.
+- Restyled panels, controls, tabs, archive table, menus, and status area with an olive/charcoal/parchment palette.
+- Reworked the main screen to prioritize project source, archive actions, track browser, and the audio drop zone.
+- Moved less-frequently used replacement controls into an expandable Advanced tools panel.
+- Kept the PS2 archive/encoder and PC SAAT workflow code from v2.1 intact.
 
 v2.1
 - Fixed the fundamental GTA SA PS2 stream packing format. The prior encoder emitted alternating L/R frames rather than the game's channel-block layout.
@@ -18,3 +66,8 @@ v1.9
 
 v1.8
 - Initially changed PS2 radio replacement payloads to 32,000 Hz; this was not a validated fix.
+
+
+Version 2.8 — window icon rendering fix
+- Set the ICO on the existing main window instead of only setting a default for future windows.
+- Rebuilt the multi-resolution ICO with pre-rendered, alpha-correct sizes to reduce edge halos.
